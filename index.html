@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>控制面板</title>
+
+<style>
+body { margin:0; font-family:-apple-system; background:#f5f7fa; }
+
+/* 侧边栏 */
+.sidebar {
+    width:220px; height:100vh; position:fixed;
+    background:#1e293b; color:white; padding:20px;
+}
+
+.menu-item {
+    padding:12px; margin-bottom:10px;
+    border-radius:10px; cursor:pointer;
+}
+.menu-item:hover { background:#334155; }
+
+/* 内容 */
+.content { margin-left:240px; padding:30px; }
+
+/* 卡片 */
+.card {
+    width:260px;
+    background:white;
+    border-radius:16px;
+    padding:20px;
+    margin-bottom:20px;
+    box-shadow:0 10px 25px rgba(0,0,0,0.08);
+}
+
+.grid {
+    display:flex;
+    flex-wrap:wrap;
+    gap:20px;
+}
+
+/* 控制台（🔥重点优化） */
+.console {
+    background:black;
+    color:white;
+    height:400px;
+    overflow-y:auto;
+    padding:15px;              /* ✅ 增加内边距 */
+    font-family:monospace;
+    border-radius:10px;
+}
+
+/* 每一行日志 */
+.console div {
+    margin-bottom:6px;         /* ✅ 行间距 */
+    line-height:1.6;           /* ✅ 行高 */
+}
+
+/* 彩色日志 */
+.log-info { color:#00ff88; }
+.log-warn { color:#ffcc00; }
+.log-error { color:#ff4d4f; }
+.log-normal { color:#ffffff; }
+
+/* 按钮 */
+button {
+    padding:6px 12px;
+    margin-left:5px;
+    cursor:pointer;
+}
+
+/* 进度条 */
+.bar { height:10px; background:#eee; border-radius:10px; margin-top:10px; }
+.fill { height:100%; background:#4caf50; }
+
+/* 防火墙 */
+.port-text { line-height:1.8; word-break:break-all; }
+</style>
+</head>
+
+<body>
+
+<div class="sidebar">
+    <div class="menu-item" onclick="showPage('info')">本机信息</div>
+    <div class="menu-item" onclick="showPage('firewall')">防火墙</div>
+    <div class="menu-item" onclick="showPage('mc')">Minecraft服务器</div>
+</div>
+
+<div class="content" id="content"></div>
+
+<script>
+let logTimer=null;
+
+function showPage(p){
+    clearInterval(logTimer);
+    if(p==="info") loadInfo();
+    if(p==="firewall") loadFirewall();
+    if(p==="mc") loadMC();
+}
+
+function openFolder(){
+    fetch("/api/mc/openfolder");
+}
+
+// 本机信息
+function loadInfo(){
+fetch("/api/info").then(r=>r.json()).then(d=>{
+let html=`<h1>本机信息</h1><div class="grid">`;
+
+html+=`<div class="card"><h3>CPU</h3>${d.cpu} (${d.cpuUsage}%)<div class="bar"><div class="fill" style="width:${d.cpuUsage}%"></div></div></div>`;
+html+=`<div class="card"><h3>内存</h3>${((d.memTotal-d.memFree)/1e9).toFixed(2)}GB / ${(d.memTotal/1e9).toFixed(2)}GB</div>`;
+
+d.disks.forEach(x=>{
+let p=(x.used/x.size*100).toFixed(0);
+html+=`<div class="card"><h3>${x.name}</h3>${(x.used/1e9).toFixed(1)}GB / ${(x.size/1e9).toFixed(1)}GB<div class="bar"><div class="fill" style="width:${p}%"></div></div></div>`;
+});
+
+html+="</div>";
+content.innerHTML=html;
+});
+}
+
+// 防火墙
+function loadFirewall(){
+fetch("/api/firewall").then(r=>r.json()).then(d=>{
+let color=d.status==="开启"?"green":"red";
+content.innerHTML=`
+<h1>防火墙</h1>
+<div class="card"><h3>状态</h3><span style="color:${color}">${d.status}</span></div>
+<div class="card"><h3>端口</h3><div class="port-text">${d.ports.join(", ")||"无"}</div></div>`;
+});
+}
+
+// Minecraft
+function loadMC(){
+content.innerHTML=`
+<h1>Minecraft服务器</h1>
+
+启动命令：
+<input id="cmd" style="width:350px" value="java -Xmx1G -Xms1G -jar server.jar nogui">
+<button onclick="start()">启动</button>
+<button onclick="stopServer()">停止</button>
+
+<br><br>
+
+<input type="file" id="file">
+<button onclick="upload()">上传</button>
+
+<div class="console" id="console"></div>
+
+<input id="input" placeholder="输入命令">
+<button onclick="send()">发送</button>
+<br><br>
+
+<button onclick="openFolder()">打开服务器文件夹</button>
+`;
+
+logTimer=setInterval(loadLogs,1000);
+}
+
+function start(){
+fetch("/api/mc/start?cmd="+encodeURIComponent(cmd.value));
+}
+
+function stopServer(){
+fetch("/api/mc/stop");
+}
+
+function send(){
+fetch("/api/mc/cmd?c="+encodeURIComponent(input.value));
+}
+
+// 彩色日志
+function formatLog(line){
+if(line.includes("ERROR")) return `<div class="log-error">${line}</div>`;
+if(line.includes("WARN")) return `<div class="log-warn">${line}</div>`;
+if(line.includes("INFO")) return `<div class="log-info">${line}</div>`;
+return `<div class="log-normal">${line}</div>`;
+}
+
+// 日志加载（可滚动）
+function loadLogs(){
+fetch("/api/mc/logs").then(r=>r.json()).then(data=>{
+let div=document.getElementById("console");
+
+let isBottom = div.scrollHeight - div.scrollTop - div.clientHeight < 10;
+
+div.innerHTML = data.map(formatLog).join("");
+
+if(isBottom) div.scrollTop = div.scrollHeight;
+});
+}
+
+function upload(){
+let f=file.files[0];
+fetch("/api/upload",{method:"POST",headers:{"x-filename":f.name},body:f});
+}
+
+showPage("info");
+</script>
+
+</body>
+</html>
